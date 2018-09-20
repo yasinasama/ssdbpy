@@ -1,4 +1,4 @@
-from ssdb.client import Redis, SSDB
+from ssdb.client import SSDB
 from ssdb.connection import (
     BlockingConnectionPool,
     ConnectionPool,

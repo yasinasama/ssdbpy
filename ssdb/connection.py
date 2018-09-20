@@ -293,7 +293,6 @@ class PythonParser(BaseParser):
         status_code_length = int(status_code_length)
         status = self._buffer.readline()
         status = nativestr(status)
-
         if status not in self.status_code or status_code_length != len(status):
             raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
 
