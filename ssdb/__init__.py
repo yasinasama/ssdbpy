@@ -2,9 +2,7 @@ from ssdb.client import SSDB
 from ssdb.connection import (
     BlockingConnectionPool,
     ConnectionPool,
-    Connection,
-    SSLConnection,
-    UnixDomainSocketConnection
+    Connection
 )
 from ssdb.utils import from_url
 from ssdb.exceptions import (
@@ -22,12 +20,12 @@ from ssdb.exceptions import (
 )
 
 
-__version__ = '2.10.6'
+__version__ = '0.0.1'
 VERSION = tuple(map(int, __version__.split('.')))
 
 __all__ = [
-    'Redis', 'StrictRedis', 'ConnectionPool', 'BlockingConnectionPool',
-    'Connection', 'SSLConnection', 'UnixDomainSocketConnection', 'from_url',
+    'SSDB', 'ConnectionPool', 'BlockingConnectionPool',
+    'Connection', 'from_url',
     'AuthenticationError', 'BusyLoadingError', 'ConnectionError', 'DataError',
     'InvalidResponse', 'PubSubError', 'ReadOnlyError', 'RedisError',
     'ResponseError', 'TimeoutError', 'WatchError'

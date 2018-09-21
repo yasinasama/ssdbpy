@@ -7,12 +7,6 @@ import sys
 import threading
 import warnings
 
-try:
-    import ssl
-    ssl_available = True
-except ImportError:
-    ssl_available = False
-
 from ssdb._compat import (b, xrange, imap, byte_to_chr, unicode, bytes, long,
                            BytesIO, nativestr, basestring, iteritems,
                            LifoQueue, Empty, Full, urlparse, parse_qs,
@@ -34,30 +28,7 @@ from ssdb.exceptions import (
     FailError,
     ClientError
 )
-from ssdb.utils import HIREDIS_AVAILABLE
-if HIREDIS_AVAILABLE:
-    import hiredis
 
-    hiredis_version = StrictVersion(hiredis.__version__)
-    HIREDIS_SUPPORTS_CALLABLE_ERRORS = \
-        hiredis_version >= StrictVersion('0.1.3')
-    HIREDIS_SUPPORTS_BYTE_BUFFER = \
-        hiredis_version >= StrictVersion('0.1.4')
-
-    if not HIREDIS_SUPPORTS_BYTE_BUFFER:
-        msg = ("redis-py works best with hiredis >= 0.1.4. You're running "
-               "hiredis %s. Please consider upgrading." % hiredis.__version__)
-        warnings.warn(msg)
-
-    HIREDIS_USE_BYTE_BUFFER = True
-    # only use byte buffer if hiredis supports it and the Python version
-    # is >= 2.7
-    if not HIREDIS_SUPPORTS_BYTE_BUFFER or (
-            sys.version_info[0] == 2 and sys.version_info[1] < 7):
-        HIREDIS_USE_BYTE_BUFFER = False
-
-# SYM_STAR = b('*')
-# SYM_DOLLAR = b('$')
 SYM_LF = b('\n')
 SYM_EMPTY = b('')
 
@@ -309,125 +280,19 @@ class PythonParser(BaseParser):
         print(response)
         return response
 
-
-class HiredisParser(BaseParser):
-    "Parser class for connections using Hiredis"
-    def __init__(self, socket_read_size):
-        if not HIREDIS_AVAILABLE:
-            raise RedisError("Hiredis is not installed")
-        self.socket_read_size = socket_read_size
-
-        if HIREDIS_USE_BYTE_BUFFER:
-            self._buffer = bytearray(socket_read_size)
-
-    def __del__(self):
-        try:
-            self.on_disconnect()
-        except Exception:
-            pass
-
-    def on_connect(self, connection):
-        self._sock = connection._sock
-        kwargs = {
-            'protocolError': InvalidResponse,
-            'replyError': self.parse_error,
-        }
-
-        # hiredis < 0.1.3 doesn't support functions that create exceptions
-        if not HIREDIS_SUPPORTS_CALLABLE_ERRORS:
-            kwargs['replyError'] = ResponseError
-
-        if connection.encoder.decode_responses:
-            kwargs['encoding'] = connection.encoder.encoding
-        self._reader = hiredis.Reader(**kwargs)
-        self._next_response = False
-
-    def on_disconnect(self):
-        self._sock = None
-        self._reader = None
-        self._next_response = False
-
-    def can_read(self):
-        if not self._reader:
-            raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
-
-        if self._next_response is False:
-            self._next_response = self._reader.gets()
-        return self._next_response is not False
-
-    def read_response(self):
-        if not self._reader:
-            raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
-
-        # _next_response might be cached from a can_read() call
-        if self._next_response is not False:
-            response = self._next_response
-            self._next_response = False
-            return response
-
-        response = self._reader.gets()
-        socket_read_size = self.socket_read_size
-        while response is False:
-            try:
-                if HIREDIS_USE_BYTE_BUFFER:
-                    bufflen = recv_into(self._sock, self._buffer)
-                    if bufflen == 0:
-                        raise socket.error(SERVER_CLOSED_CONNECTION_ERROR)
-                else:
-                    buffer = recv(self._sock, socket_read_size)
-                    # an empty string indicates the server shutdown the socket
-                    if not isinstance(buffer, bytes) or len(buffer) == 0:
-                        raise socket.error(SERVER_CLOSED_CONNECTION_ERROR)
-            except socket.timeout:
-                raise TimeoutError("Timeout reading from socket")
-            except socket.error:
-                e = sys.exc_info()[1]
-                raise ConnectionError("Error while reading from socket: %s" %
-                                      (e.args,))
-            if HIREDIS_USE_BYTE_BUFFER:
-                self._reader.feed(self._buffer, 0, bufflen)
-            else:
-                self._reader.feed(buffer)
-            response = self._reader.gets()
-        # if an older version of hiredis is installed, we need to attempt
-        # to convert ResponseErrors to their appropriate types.
-        if not HIREDIS_SUPPORTS_CALLABLE_ERRORS:
-            if isinstance(response, ResponseError):
-                response = self.parse_error(response.args[0])
-            elif isinstance(response, list) and response and \
-                    isinstance(response[0], ResponseError):
-                response[0] = self.parse_error(response[0].args[0])
-        # if the response is a ConnectionError or the response is a list and
-        # the first item is a ConnectionError, raise it as something bad
-        # happened
-        if isinstance(response, ConnectionError):
-            raise response
-        elif isinstance(response, list) and response and \
-                isinstance(response[0], ConnectionError):
-            raise response[0]
-        return response
-
-
-if HIREDIS_AVAILABLE:
-    DefaultParser = HiredisParser
-else:
-    DefaultParser = PythonParser
-
-
 class Connection(object):
     "Manages TCP communication to and from a Redis server"
-    description_format = "Connection<host=%(host)s,port=%(port)s,db=%(db)s>"
+    description_format = "Connection<host=%(host)s,port=%(port)s>"
 
-    def __init__(self, host='localhost', port=6379, db=0, password=None,
+    def __init__(self, host='localhost', port=8888, password=None,
                  socket_timeout=None, socket_connect_timeout=None,
                  socket_keepalive=False, socket_keepalive_options=None,
                  socket_type=0, retry_on_timeout=False, encoding='utf-8',
                  encoding_errors='strict', decode_responses=False,
-                 parser_class=DefaultParser, socket_read_size=65536):
+                 parser_class=PythonParser, socket_read_size=65536):
         self.pid = os.getpid()
         self.host = host
         self.port = int(port)
-        self.db = db
         self.password = password
         self.socket_timeout = socket_timeout
         self.socket_connect_timeout = socket_connect_timeout or socket_timeout
@@ -441,7 +306,6 @@ class Connection(object):
         self._description_args = {
             'host': self.host,
             'port': self.port,
-            'db': self.db,
         }
         self._connect_callbacks = []
 
@@ -541,15 +405,9 @@ class Connection(object):
 
         # if a password is specified, authenticate
         if self.password:
-            self.send_command('AUTH', self.password)
-            if nativestr(self.read_response()) != 'OK':
+            self.send_command('auth', self.password)
+            if nativestr(self.read_response()[0]) != 'ok':
                 raise AuthenticationError('Invalid Password')
-
-        # if a database is specified, switch to it
-        if self.db:
-            self.send_command('SELECT', self.db)
-            if nativestr(self.read_response()) != 'OK':
-                raise ConnectionError('Invalid Database')
 
     def disconnect(self):
         "Disconnects from the Redis server"
@@ -614,7 +472,7 @@ class Connection(object):
         return response
 
     def pack_command(self, *args):
-        "Pack a series of arguments into the Redis protocol"
+        "Pack a series of arguments into the ssdb protocol"
         output = []
         # the client might have included 1 or more literal arguments in
         # the command name, e.g., 'CONFIG GET'. The Redis server expects these
@@ -666,87 +524,6 @@ class Connection(object):
             output.append(SYM_EMPTY.join(pieces))
         return output
 
-
-class SSLConnection(Connection):
-    description_format = "SSLConnection<host=%(host)s,port=%(port)s,db=%(db)s>"
-
-    def __init__(self, ssl_keyfile=None, ssl_certfile=None, ssl_cert_reqs=None,
-                 ssl_ca_certs=None, **kwargs):
-        if not ssl_available:
-            raise RedisError("Python wasn't built with SSL support")
-
-        super(SSLConnection, self).__init__(**kwargs)
-
-        self.keyfile = ssl_keyfile
-        self.certfile = ssl_certfile
-        if ssl_cert_reqs is None:
-            ssl_cert_reqs = ssl.CERT_NONE
-        elif isinstance(ssl_cert_reqs, basestring):
-            CERT_REQS = {
-                'none': ssl.CERT_NONE,
-                'optional': ssl.CERT_OPTIONAL,
-                'required': ssl.CERT_REQUIRED
-            }
-            if ssl_cert_reqs not in CERT_REQS:
-                raise RedisError(
-                    "Invalid SSL Certificate Requirements Flag: %s" %
-                    ssl_cert_reqs)
-            ssl_cert_reqs = CERT_REQS[ssl_cert_reqs]
-        self.cert_reqs = ssl_cert_reqs
-        self.ca_certs = ssl_ca_certs
-
-    def _connect(self):
-        "Wrap the socket with SSL support"
-        sock = super(SSLConnection, self)._connect()
-        sock = ssl.wrap_socket(sock,
-                               cert_reqs=self.cert_reqs,
-                               keyfile=self.keyfile,
-                               certfile=self.certfile,
-                               ca_certs=self.ca_certs)
-        return sock
-
-
-class UnixDomainSocketConnection(Connection):
-    description_format = "UnixDomainSocketConnection<path=%(path)s,db=%(db)s>"
-
-    def __init__(self, path='', db=0, password=None,
-                 socket_timeout=None, encoding='utf-8',
-                 encoding_errors='strict', decode_responses=False,
-                 retry_on_timeout=False,
-                 parser_class=DefaultParser, socket_read_size=65536):
-        self.pid = os.getpid()
-        self.path = path
-        self.db = db
-        self.password = password
-        self.socket_timeout = socket_timeout
-        self.retry_on_timeout = retry_on_timeout
-        self.encoder = Encoder(encoding, encoding_errors, decode_responses)
-        self._sock = None
-        self._parser = parser_class(socket_read_size=socket_read_size)
-        self._description_args = {
-            'path': self.path,
-            'db': self.db,
-        }
-        self._connect_callbacks = []
-
-    def _connect(self):
-        "Create a Unix domain socket connection"
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.socket_timeout)
-        sock.connect(self.path)
-        return sock
-
-    def _error_message(self, exception):
-        # args for socket.error can either be (errno, "message")
-        # or just "message"
-        if len(exception.args) == 1:
-            return "Error connecting to unix socket: %s. %s." % \
-                (self.path, exception.args[0])
-        else:
-            return "Error %s connecting to unix socket: %s. %s." % \
-                (exception.args[0], self.path, exception.args[1])
-
-
 FALSE_STRINGS = ('0', 'F', 'FALSE', 'N', 'NO')
 
 
@@ -769,34 +546,13 @@ URL_QUERY_ARGUMENT_PARSERS = {
 class ConnectionPool(object):
     "Generic connection pool"
     @classmethod
-    def from_url(cls, url, db=None, decode_components=False, **kwargs):
+    def from_url(cls, url, decode_components=False, **kwargs):
         """
         Return a connection pool configured from the given URL.
 
         For example::
 
-            redis://[:password]@localhost:6379/0
-            rediss://[:password]@localhost:6379/0
-            unix://[:password]@/path/to/socket.sock?db=0
-
-        Three URL schemes are supported:
-
-        - ```redis://``
-          <http://www.iana.org/assignments/uri-schemes/prov/redis>`_ creates a
-          normal TCP socket connection
-        - ```rediss://``
-          <http://www.iana.org/assignments/uri-schemes/prov/rediss>`_ creates a
-          SSL wrapped TCP socket connection
-        - ``unix://`` creates a Unix Domain Socket connection
-
-        There are several ways to specify a database number. The parse function
-        will return the first specified option:
-            1. A ``db`` querystring option, e.g. redis://localhost?db=0
-            2. If using the redis:// scheme, the path argument of the url, e.g.
-               redis://localhost/0
-            3. The ``db`` argument to this function.
-
-        If none of these options are specified, db=0 is used.
+            ssdb://[:password]@localhost:8888
 
         The ``decode_components`` argument allows this function to work with
         percent-encoded URLs. If this argument is set to ``True`` all ``%xx``
@@ -844,41 +600,15 @@ class ConnectionPool(object):
 
         if decode_components:
             password = unquote(url.password) if url.password else None
-            path = unquote(url.path) if url.path else None
             hostname = unquote(url.hostname) if url.hostname else None
         else:
             password = url.password
-            path = url.path
             hostname = url.hostname
-
-        # We only support redis:// and unix:// schemes.
-        if url.scheme == 'unix':
-            url_options.update({
-                'password': password,
-                'path': path,
-                'connection_class': UnixDomainSocketConnection,
-            })
-
-        else:
-            url_options.update({
-                'host': hostname,
-                'port': int(url.port or 6379),
-                'password': password,
-            })
-
-            # If there's a path argument, use it as the db argument if a
-            # querystring value wasn't specified
-            if 'db' not in url_options and path:
-                try:
-                    url_options['db'] = int(path.replace('/', ''))
-                except (AttributeError, ValueError):
-                    pass
-
-            if url.scheme == 'rediss':
-                url_options['connection_class'] = SSLConnection
-
-        # last shot at the db value
-        url_options['db'] = int(url_options.get('db', db or 0))
+        url_options.update({
+            'host': hostname,
+            'port': int(url.port or 8888),
+            'password': password,
+        })
 
         # update the arguments from the URL values
         kwargs.update(url_options)
