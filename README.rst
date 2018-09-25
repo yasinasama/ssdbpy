@@ -18,7 +18,7 @@ Getting Started
 .. code-block:: pycon
 
     >>> import ssdb
-    >>> r = ssdb.SSDB(host=localhost,port=8888)
+    >>> r = ssdb.SSDB(host='localhost',port=8888)
     >>> r.set('foo', 'bar')
     True
     >>> r.get('foo')
@@ -29,5 +29,5 @@ Connection Pools
 .. code-block:: pycon
 
     >>> import ssdb
-    >>> pool = ssdb.ConnectionPool(host=localhost,port=8888)
+    >>> pool = ssdb.ConnectionPool(host='localhost',port=8888)
     >>> r = ssdb.SSDB(connection_pool=pool)
