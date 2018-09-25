@@ -4,19 +4,11 @@ from ssdb.connection import (
     ConnectionPool,
     Connection
 )
-from ssdb.utils import from_url
 from ssdb.exceptions import (
-    AuthenticationError,
-    BusyLoadingError,
     ConnectionError,
-    DataError,
-    InvalidResponse,
-    PubSubError,
-    ReadOnlyError,
-    RedisError,
+    SSDBError,
     ResponseError,
-    TimeoutError,
-    WatchError
+    TimeoutError
 )
 
 
@@ -24,9 +16,6 @@ __version__ = '0.0.1'
 VERSION = tuple(map(int, __version__.split('.')))
 
 __all__ = [
-    'SSDB', 'ConnectionPool', 'BlockingConnectionPool',
-    'Connection', 'from_url',
-    'AuthenticationError', 'BusyLoadingError', 'ConnectionError', 'DataError',
-    'InvalidResponse', 'PubSubError', 'ReadOnlyError', 'RedisError',
-    'ResponseError', 'TimeoutError', 'WatchError'
+    'SSDB', 'ConnectionPool', 'BlockingConnectionPool','Connection',
+    'ConnectionError', 'SSDBError','ResponseError', 'TimeoutError'
 ]

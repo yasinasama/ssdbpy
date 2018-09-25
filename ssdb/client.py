@@ -1,26 +1,10 @@
 from __future__ import with_statement
-from itertools import chain
-import datetime
-import sys
 import warnings
-import time
-import threading
-import time as mod_time
-import hashlib
-from ssdb._compat import (b, basestring, bytes, imap, iteritems, iterkeys,
-                           itervalues, izip, long, nativestr, unicode,
-                           safe_unicode)
-from ssdb.connection import (ConnectionPool,Token)
+from ssdb._compat import b, izip
+from ssdb.connection import ConnectionPool
 from ssdb.exceptions import (
     ConnectionError,
-    DataError,
-    ExecAbortError,
-    NoScriptError,
-    PubSubError,
-    RedisError,
-    ResponseError,
-    TimeoutError,
-    WatchError,
+    TimeoutError
 )
 
 SYM_EMPTY = b('')
@@ -69,15 +53,17 @@ class SSDB(object):
     """
     RESPONSE_CALLBACKS = dict_merge(
         string_keys_to_dict(
-            'auth exists hexists zexists',
+            'auth exists hexists zexists '
+            'set setx setnx expire del multi_set multi_del hset hdel '
+            'hclear multi_hset multi_hdel zset zdel zclear '
+            'zremrangebyrank zremrangebyscore multi_zset multi_zdel '
+            'qpush_front qpush_back qpush qclear qtrim_front qtrim_back',
             response_to_bool
         ),
         string_keys_to_dict(
-            'set setx setnx expire ttl del incr getbit setbit bitcount '
-            'countbit strlen multi_set multi_del hset hdel hincr hsize '
-            'hclear multi_hset multi_hdel zset zdel zincr zsize zclear '
-            'zcount zsum zremrangebyrank zremrangebyscore multi_zset multi_zdel '
-            'qpush_front qpush_back qpush qsize qclear qtrim_front qtrim_back',
+            'ttl incr getbit setbit bitcount '
+            'countbit strlen hincr hsize zincr zsize '
+            'zcount zsum qsize',
             response_to_int
         ),
         string_keys_to_dict(
@@ -155,10 +141,6 @@ class SSDB(object):
     def __repr__(self):
         return "%s<%s>" % (type(self).__name__, repr(self.connection_pool))
 
-    def set_response_callback(self, command, callback):
-        "Set a custom Response Callback"
-        self.response_callbacks[command] = callback
-
     # COMMAND EXECUTION AND PROTOCOL PARSING
     def execute_command(self, *args, **options):
         "Execute a command and return a parsed response"
@@ -178,11 +160,9 @@ class SSDB(object):
             pool.release(connection)
 
     def parse_response(self, connection, command_name, **options):
-        "Parses a response from the Redis server"
+        "Parses a response from the ssdb server"
         response = connection.read_response()
 
-        # status_code = response[0]
-        # if status_code == 'ok'
         content = response[1:]
         if command_name in self.response_callbacks:
             return self.response_callbacks[command_name](content, **options)
@@ -201,12 +181,12 @@ class SSDB(object):
 
     def info(self, section=None):
         """
-        Returns a dictionary containing information about the Redis server
+        Returns a dictionary containing information about the ssdb server
 
         The ``section`` option can be used to select a specific section
         of information
 
-        The section option is not supported by older versions of Redis Server,
+        The section option is not supported by older versions of ssdb Server,
         and will generate ResponseError
         """
         if section is None:
@@ -311,7 +291,7 @@ class SSDB(object):
     def bitcount(self, key, start=None, end=None):
         """
         Count the number of set bits (population counting) in a string.
-        Like Redis's bitcount.
+        Like ssdb's bitcount.
         """
         params = [key]
 

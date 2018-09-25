@@ -1,5 +1,4 @@
 from __future__ import with_statement
-from distutils.version import StrictVersion
 from itertools import chain
 import os
 import socket
@@ -7,23 +6,15 @@ import sys
 import threading
 import warnings
 
-from ssdb._compat import (b, xrange, imap, byte_to_chr, unicode, bytes, long,
+from ssdb._compat import (b, imap, unicode, bytes, long,
                            BytesIO, nativestr, basestring, iteritems,
                            LifoQueue, Empty, Full, urlparse, parse_qs,
-                           recv, recv_into, select, unquote)
+                           recv, select, unquote)
 from ssdb.exceptions import (
-    RedisError,
+    SSDBError,
     ConnectionError,
     TimeoutError,
-    BusyLoadingError,
     ResponseError,
-    InvalidResponse,
-    AuthenticationError,
-    NoScriptError,
-    ExecAbortError,
-    ReadOnlyError,
-    NotFoundError,
-    StatusCodeError,
     ErrorError,
     FailError,
     ClientError
@@ -37,7 +28,7 @@ SERVER_CLOSED_CONNECTION_ERROR = "Connection closed by server."
 
 class Token(object):
     """
-    Literal strings in Redis commands, such as the command names and any
+    Literal strings in ssdb commands, such as the command names and any
     hard-coded arguments are wrapped in this class so we know not to apply
     and encoding rules on them.
     """
@@ -104,18 +95,17 @@ class Encoder(object):
 
 class BaseParser(object):
     EXCEPTION_CLASSES = {
-        'not_found' : NotFoundError,
         'error'     : ErrorError,
         'fail'      : FailError,
         'client_error'  : ClientError
     }
 
-    def parse_error(self, error_code):
+    def parse_error(self, error_code,error_msg):
         "Parse an error response"
         if error_code in self.EXCEPTION_CLASSES:
             exception_class = self.EXCEPTION_CLASSES[error_code]
-            return exception_class(error_code)
-        return ResponseError(error_code)
+            return exception_class(error_msg)
+        return ResponseError(error_msg)
 
 
 class SocketBuffer(object):
@@ -145,7 +135,6 @@ class SocketBuffer(object):
                 if isinstance(data, bytes) and len(data) == 0:
                     raise socket.error(SERVER_CLOSED_CONNECTION_ERROR)
                 buf.write(data)
-                print(data)
                 data_length = len(data)
                 self.bytes_written += data_length
                 marker += data_length
@@ -224,12 +213,6 @@ class PythonParser(BaseParser):
         self._sock = None
         self._buffer = None
 
-        self.status_code = ('ok',
-                            'not_found',
-                            'error',
-                            'fail',
-                            'client_error')
-
     def __del__(self):
         try:
             self.on_disconnect()
@@ -264,7 +247,8 @@ class PythonParser(BaseParser):
         status_code_length = int(status_code_length)
         status = self._buffer.readline()
         status = nativestr(status)
-        if status not in self.status_code or status_code_length != len(status):
+        # check status code
+        if status_code_length != len(status):
             raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR)
 
         response = [status]
@@ -277,11 +261,14 @@ class PythonParser(BaseParser):
             text = self._buffer.read(text_length)
             text = nativestr(text)
             response.append(text)
-        print(response)
+
+        # ok and not_found status not raise
+        if status not in ('ok','not_found'):
+            raise self.parse_error(status,response[1])
         return response
 
 class Connection(object):
-    "Manages TCP communication to and from a Redis server"
+    "Manages TCP communication to and from a ssdb server"
     description_format = "Connection<host=%(host)s,port=%(port)s>"
 
     def __init__(self, host='localhost', port=8888, password=None,
@@ -325,7 +312,7 @@ class Connection(object):
         self._connect_callbacks = []
 
     def connect(self):
-        "Connects to the Redis server if not already connected"
+        "Connects to the ssdb server if not already connected"
         if self._sock:
             return
         try:
@@ -339,7 +326,7 @@ class Connection(object):
         self._sock = sock
         try:
             self.on_connect()
-        except RedisError:
+        except SSDBError:
             # clean up after any error in on_connect
             self.disconnect()
             raise
@@ -406,11 +393,10 @@ class Connection(object):
         # if a password is specified, authenticate
         if self.password:
             self.send_command('auth', self.password)
-            if nativestr(self.read_response()[0]) != 'ok':
-                raise AuthenticationError('Invalid Password')
+            self.read_response()
 
     def disconnect(self):
-        "Disconnects from the Redis server"
+        "Disconnects from the ssdb server"
         self._parser.on_disconnect()
         if self._sock is None:
             return
@@ -422,7 +408,7 @@ class Connection(object):
         self._sock = None
 
     def send_packed_command(self, command):
-        "Send an already packed command to the Redis server"
+        "Send an already packed command to the ssdb server"
         if not self._sock:
             self.connect()
         try:
@@ -448,7 +434,7 @@ class Connection(object):
             raise
 
     def send_command(self, *args):
-        "Pack and send a command to the Redis server"
+        "Pack and send a command to the ssdb server"
         self.send_packed_command(self.pack_command(*args))
 
     def can_read(self, timeout=0):
@@ -475,7 +461,7 @@ class Connection(object):
         "Pack a series of arguments into the ssdb protocol"
         output = []
         # the client might have included 1 or more literal arguments in
-        # the command name, e.g., 'CONFIG GET'. The Redis server expects these
+        # the command name, e.g., 'CONFIG GET'. The ssdb server expects these
         # arguments to be sent separately, so split the first argument
         # manually. All of these arguements get wrapped in the Token class
         # to prevent them from being encoded.
@@ -505,7 +491,7 @@ class Connection(object):
         return output
 
     def pack_commands(self, commands):
-        "Pack multiple commands into the Redis protocol"
+        "Pack multiple commands into the ssdb protocol"
         output = []
         pieces = []
         buffer_length = 0
@@ -629,10 +615,10 @@ class ConnectionPool(object):
                  **connection_kwargs):
         """
         Create a connection pool. If max_connections is set, then this
-        object raises redis.ConnectionError when the pool's limit is reached.
+        object raises ssdb.ConnectionError when the pool's limit is reached.
 
         By default, TCP connections are created unless connection_class is
-        specified. Use redis.UnixDomainSocketConnection for unix sockets.
+        specified. Use ssdb.UnixDomainSocketConnection for unix sockets.
 
         Any additional keyword arguments are passed to the constructor of
         connection_class.
@@ -716,18 +702,18 @@ class BlockingConnectionPool(ConnectionPool):
     """
     Thread-safe blocking connection pool::
 
-        >>> from redis.client import Redis
-        >>> client = Redis(connection_pool=BlockingConnectionPool())
+        >>> from ssdb.client import SSDB
+        >>> client = SSDB(connection_pool=BlockingConnectionPool())
 
     It performs the same function as the default
-    ``:py:class: ~redis.connection.ConnectionPool`` implementation, in that,
+    ``:py:class: ~ssdb.connection.ConnectionPool`` implementation, in that,
     it maintains a pool of reusable connections that can be shared by
-    multiple redis clients (safely across threads if required).
+    multiple ssdb clients (safely across threads if required).
 
     The difference is that, in the event that a client tries to get a
     connection from the pool when all of connections are in use, rather than
-    raising a ``:py:class: ~redis.exceptions.ConnectionError`` (as the default
-    ``:py:class: ~redis.connection.ConnectionPool`` implementation does), it
+    raising a ``:py:class: ~ssdb.exceptions.ConnectionError`` (as the default
+    ``:py:class: ~ssdb.connection.ConnectionPool`` implementation does), it
     makes the client wait ("blocks") for a specified number of seconds until
     a connection becomes available.
 
@@ -799,7 +785,7 @@ class BlockingConnectionPool(ConnectionPool):
         try:
             connection = self.pool.get(block=True, timeout=self.timeout)
         except Empty:
-            # Note that this is not caught by the redis client and will be
+            # Note that this is not caught by the ssdb client and will be
             # raised unless handled by application code. If you want never to
             raise ConnectionError("No connection available.")
 

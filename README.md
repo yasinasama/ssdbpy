@@ -1,2 +1,0 @@
-# ssdbpy
-ssdb python client
