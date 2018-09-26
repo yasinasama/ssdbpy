@@ -1,7 +1,7 @@
 ssdbpy
 ======
 
-The Python interface to the ssdb
+The Python interface to the ssdb.Changed from redis-py.
 
 Installation
 ------------
